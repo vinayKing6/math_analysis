@@ -37,7 +37,7 @@ def boxplot(data):
 
 
 # 频率分布直方图
-def distribution_histogram(_data, col, cut, figsize=(10, 6), xlabel='分层', title='频率分布直方图'):
+def distribution_histogram(data, col, cut, figsize=(10, 6), xlabel='分层', title='频率分布直方图'):
     _data = data.copy()
     data_size = len(_data)
     max = _data.max(axis=0)[col]
