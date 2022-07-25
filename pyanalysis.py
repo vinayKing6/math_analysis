@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from numpy import arange
 from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from sklearn.linear_model import LogisticRegression
 
 
 def excel_describe(excel_name, index_name: Union[str, int, None] = 0, sheet_name: Union[str, int, None] = 0):
@@ -117,7 +119,7 @@ def pareto_chart(data, labels=None, figsize=(8, 4), title='帕累托图', xlabel
     if labels is not None:
         _data.index = labels
     _data = _data.sort_values(ascending=False)
-    print(_data)
+    # print(_data)
     # 正常显示图标
     plt.rcParams['font.sans-serif'] = ['SimHei']
     plt.rcParams['axes.unicode_minus'] = False
@@ -279,6 +281,32 @@ def cluster_plot(data, d, k, figsize=(8, 4), title='离散数据图', xlabel='�
     plt.ylim(-0.5, k - 0.5)
     plt.show()
 
+#主成分分析 将多维数据降维
+def pca(data,ratio=0.97):
+    instance=PCA()
+    instance.fit(data)
+    n=0
+    s=0
+    for i in instance.explained_variance_ratio_:
+        s=i+s
+        n=n+1
+        if s >ratio:
+            break
+    # print(instance.explained_variance_ratio_)
+    # print(n)
+    n_pca=PCA(n)
+    n_pca.fit(data)
+    low_d=n_pca.transform(data)
+    return pd.DataFrame(low_d)
+
+#logistic 回归 分类
+def logistic_regression(data,label_col):
+    x=data.drop(columns=[label_col],axis=1).values
+    y=data[label_col].values
+    model=LogisticRegression()
+    model.fit(x,y)
+    print('accuracy: {}'.format(model.score(x,y)))
+    return model
 
 if __name__ == '__main__':
     excel_name = './source/chapter3/demo/data/catering_sale.xls'
@@ -354,4 +382,18 @@ if __name__ == '__main__':
     # print(cluster(data11['data'], 4, is_draw=True))
     # print(cluster(data11['data'], 4,method=equal_width_cluster, is_draw=True))
     # print(cluster(data11['data'], 4,method=equal_fraguency_cluster, is_draw=True))
+
+    excel_name12='./source/chapter3/demo/data/principal_component.xls'
+    data12=pd.read_excel(excel_name12)
+    #主成分分析
+    # pca(data12).to_excel('principal_component_result.xls')
+
+    excel_name13='source/chapter5/demo/data/bankloan.xls'
+    data13=pd.read_excel(excel_name13)
+    # x=pca(data13.iloc[:,:8])
+    # y=data13.iloc[:,8]
+    # data13=pd.concat([x,y],axis=1)
+    #logistic回归 分类预测
+    # logistic_model=logistic_regression(data13,'违约')
+    # print(logistic_model.predict(data13.iloc[0:5,:8]))
 

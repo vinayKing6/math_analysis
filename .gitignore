@@ -1,5 +1,7 @@
 /source/
 /01181756gtu3.rar
 /*.xlsx
+/*.xls;xlsx;csv
 /source.zip
 /test.py
+/principal_component_result.xls
