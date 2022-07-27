@@ -7,7 +7,12 @@ from numpy import arange
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
-
+from sklearn.tree import DecisionTreeClassifier as DTC
+from sklearn.tree import export_graphviz
+import os
+from keras.layers import Dense, LSTM, Dropout
+from keras.models import Sequential
+from keras import optimizers
 
 def excel_describe(excel_name, index_name: Union[str, int, None] = 0, sheet_name: Union[str, int, None] = 0):
     data = pd.read_excel(excel_name, index_col=index_name, sheet_name=sheet_name)
@@ -262,15 +267,43 @@ def k_means_cluster_1d(data, k):
     w = [0] + list(w[0]) + [data.max()]
     return pd.cut(data, w, labels=range(k))
 
+#多特征k-means聚类离散化
+def k_means_cluster_nd(data,k,to_excel_name,iteration=500):
+     kmodel=KMeans(n_clusters=k,max_iter=iteration,random_state=1234)
+     kmodel.fit(data)
 
-def cluster(data, k, method=k_means_cluster_1d, is_draw=False):
+     #print result
+     r1=pd.Series(kmodel.labels_).value_counts()
+     r2=pd.DataFrame(kmodel.cluster_centers_)
+     r=pd.concat([r2,r1],axis=1)
+     r.columns=list(data.columns)+['类别数目']
+     print(r)
+
+     r=pd.concat([data,pd.Series(kmodel.labels_,index=data.index)],axis=1)
+     r.columns=list(data.columns)+['聚类类别']
+     r.to_excel(to_excel_name)
+
+     return r
+
+
+
+#离散化数据，分类
+def cluster(data, k, method=k_means_cluster_nd,save_density_fig=False, is_draw=False,to_excel_name='k_means_result.xlsx'):
     _data = data.copy()
-    d = k_means_cluster_1d(_data, k)
+    try:
+        d = method(_data, k, to_excel_name)
+    except Exception:
+        d=method(_data,k)
+
+    if save_density_fig:
+        for i in range(k):
+            density_plot(_data[d['聚类类别']==i]).savefig('%s.png'%(i))
+
     if is_draw:
         cluster_plot(_data, d, k)
     return d
 
-
+#画图离散化数据
 def cluster_plot(data, d, k, figsize=(8, 4), title='离散数据图', xlabel='数据1', ylabel='数据2'):
     plt.rcParams['font.sans-serif'] = ['SimHei']
     plt.rcParams['axes.unicode_minus'] = False
@@ -280,6 +313,16 @@ def cluster_plot(data, d, k, figsize=(8, 4), title='离散数据图', xlabel='�
         plt.plot(data[d == j], [j for i in d[d == j]], 'o')
     plt.ylim(-0.5, k - 0.5)
     plt.show()
+
+#聚类密度图
+def density_plot(data):
+    plt.rcParams['font.sans-serif'] = ['SimHei']
+    plt.rcParams['axes.unicode_minus'] = False
+
+    p=data.plot(kind='kde',linewidth=2,subplots=True,sharex=False)
+    [p[i].set_ylabel('密度') for i in range(len(p))]
+    plt.legend()
+    return plt
 
 #主成分分析 将多维数据降维
 def pca(data,ratio=0.97):
@@ -308,7 +351,55 @@ def logistic_regression(data,label_col):
     print('accuracy: {}'.format(model.score(x,y)))
     return model
 
-if __name__ == '__main__':
+#决策树分类
+def dtc(data,label_col,export_name='dtc_export.dot',pdf_name='dtc.pdf',to_pdf=True):
+    _data=data.copy()
+    x=_data.drop(columns=[label_col],axis=1).values.astype(int)
+    y=_data[label_col].values.astype(int)
+    _dtc=DTC(criterion='entropy')
+    _dtc.fit(x,y)
+    x=pd.DataFrame(x)
+    with open(export_name,'w') as f:
+        f=export_graphviz(_dtc,feature_names=_data.columns[:len(_data.columns)-1],out_file=f)
+    if to_pdf:
+        command='dot -Tpdf {0} -o {1}'.format(export_name,pdf_name)
+        os.system(command)
+    return _dtc
+
+# one hot 编码
+def one_hot(data, capacity):
+    result = np.zeros((len(data), capacity))
+    for i, pos in enumerate(data):
+        result[i, pos] = 1.
+    return result
+
+#bp神经网络 默认二分类
+def bp_network(data,label_col,classes=2,epochs=500,batch_size=128,preprocess=True):
+    _data=data.copy()
+    x_train=_data.drop(columns=[label_col],axis=1).values
+    y_train=_data[label_col].values.astype(int)
+    y_train=one_hot(y_train,classes)
+    print(y_train)
+    if preprocess:
+        normalization(x_train)#归一化
+
+    model = Sequential()
+    model.add(Dense(64, input_shape=(x_train.shape[1],), activation='relu'))
+    model.add(Dropout(0.5))
+    model.add(Dense(128, activation='relu'))
+    model.add(Dropout(0.5))
+    model.add(Dense(64, activation='relu'))
+    model.add(Dense(classes, activation='softmax'))
+    model.compile(optimizer=optimizers.adam_v2.Adam(lr=0.001),
+                  loss='categorical_crossentropy',
+                  metrics=['accuracy'])
+
+    history = model.fit(x_train, y_train, epochs=epochs, batch_size=batch_size)
+    return model
+
+
+
+def test():
     excel_name = './source/chapter3/demo/data/catering_sale.xls'
     index_col = '日期'
     data, data_describe = excel_describe(excel_name, index_col)
@@ -379,7 +470,7 @@ if __name__ == '__main__':
     excel_name11 = './source/chapter3/demo/data/discretization_data.xls'
     data11 = pd.read_excel(excel_name11, names=['data'])
     #一维数据离散化
-    # print(cluster(data11['data'], 4, is_draw=True))
+    # print(cluster(data11['data'], 4,method=k_means_cluster_1d, is_draw=True))
     # print(cluster(data11['data'], 4,method=equal_width_cluster, is_draw=True))
     # print(cluster(data11['data'], 4,method=equal_fraguency_cluster, is_draw=True))
 
@@ -396,4 +487,39 @@ if __name__ == '__main__':
     #logistic回归 分类预测
     # logistic_model=logistic_regression(data13,'违约')
     # print(logistic_model.predict(data13.iloc[0:5,:8]))
+
+    #决策树分类
+    excel_name14='source/chapter5/demo/data/sales_data.xls'
+    data14=pd.read_excel(excel_name14,index_col='序号')
+    data14.columns=['weather','weekend','off','sales']
+    # print(data14)
+    # 1代表高，好，是，反之-1
+    data14.replace(['是','高','好'],1,inplace=True)
+    data14=data14[data14==1].replace(np.nan,0)
+    # print(data14)
+    # dtc(data14,label_col='sales')
+
+    #测试聚类与决策树分类
+    # nor_data13=normalization(data13.iloc[:,:len(data13.columns)-1])
+    # nor_data13=abs(nor_data13)
+    # gen_class=[]
+    # print(nor_data13)
+    # for col in nor_data13.columns:
+    #     gen_class.append(cluster(nor_data13[col],k=4,is_draw=False))
+    # gen_class.append(data13.iloc[:,-1])
+    # new_pd=pd.concat(gen_class,axis=1)
+    # dtc(new_pd,label_col='违约')
+    # new_pd.to_excel('test_cluster_dtc.xlsx')
+
+    #bp神经网络分类
+    # bp_network(data14,label_col='sales',epochs=1000) 0.77
+    # bp_network(data13,label_col='违约',epochs=1000) 0.84
+
+    #k-means多特征分类
+    excel_name15='source/chapter5/demo/data/consumption_data.xls'
+    data15=pd.read_excel(excel_name15,index_col=0)
+    # cluster(data15,k=4,save_density_fig=True)
+
+if __name__ == '__main__':
+    test()
 
