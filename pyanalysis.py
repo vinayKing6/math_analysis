@@ -13,6 +13,11 @@ import os
 from keras.layers import Dense, LSTM, Dropout
 from keras.models import Sequential
 from keras import optimizers
+from statsmodels import *
+from statsmodels.stats.diagnostic import acorr_ljungbox
+import statsmodels.api as sm
+from statsmodels.graphics.tsaplots import plot_acf
+from statsmodels.graphics.tsaplots import plot_pacf
 
 def excel_describe(excel_name, index_name: Union[str, int, None] = 0, sheet_name: Union[str, int, None] = 0):
     data = pd.read_excel(excel_name, index_col=index_name, sheet_name=sheet_name)
@@ -397,128 +402,243 @@ def bp_network(data,label_col,classes=2,epochs=500,batch_size=128,preprocess=Tru
     history = model.fit(x_train, y_train, epochs=epochs, batch_size=batch_size)
     return model
 
+#apriori 寻找元素之间关联性(有点像有向图) support支持度=P(AB) confidence置信度=P(B|A)=P(AB)/P(A)
+def apriori(data,support=0.2,confidence=0.5,ms='----'):
+    _data=data.copy()
+    ct=lambda x:pd.Series(1,index=x[pd.notnull(x)])
+    b=list(map(ct,_data.values))
+    new_data=pd.DataFrame(b).fillna(0)
+    del b
+    return find_rule(new_data,support,confidence,ms)
 
+
+
+def connect_string(x, ms):
+    x = list(map(lambda i: sorted(i.split(ms)), x))
+    l = len(x[0])
+    r = []
+    for i in range(len(x)):
+        for j in range(i, len(x)):
+            if x[i][:l - 1] == x[j][:l - 1] and x[i][l - 1] != x[j][l - 1]:
+                r.append(x[i][:l - 1] + sorted([x[j][l - 1], x[i][l - 1]]))
+    return r
+
+
+# 寻找关联规则的函数
+def find_rule(d, support, confidence, ms='--'):
+    result = pd.DataFrame(index=['support', 'confidence'])  # 定义输出结果
+
+    support_series = 1.0 * d.sum() / len(d)  # 支持度序列
+    print(d)
+    print(support_series)
+    column = list(support_series[support_series > support].index)  # 初步根据支持度筛选
+    k = 0
+
+    while len(column) > 1:
+        k = k + 1
+        print('\n正在进行第%s次搜索...' % k)
+        column = connect_string(column, ms)
+        print('数目：%s...' % len(column))
+        sf = lambda i: d[i].prod(axis=1, numeric_only=True)  # 新一批支持度的计算函数
+
+        # 创建连接数据，这一步耗时、耗内存最严重。当数据集较大时，可以考虑并行运算优化。
+        d_2 = pd.DataFrame(list(map(sf, column)), index=[ms.join(i) for i in column]).T
+
+        support_series_2 = 1.0 * d_2[[ms.join(i) for i in column]].sum() / len(d)  # 计算连接后的支持度
+        column = list(support_series_2[support_series_2 > support].index)  # 新一轮支持度筛选
+        support_series = support_series.append(support_series_2)
+        column2 = []
+
+        for i in column:  # 遍历可能的推理，如{A,B,C}究竟是A+B-->C还是B+C-->A还是C+A-->B？
+            i = i.split(ms)
+            for j in range(len(i)):
+                column2.append(i[:j] + i[j + 1:] + i[j:j + 1])
+
+        cofidence_series = pd.Series(index=[ms.join(i) for i in column2])  # 定义置信度序列
+
+        for i in column2:  # 计算置信度序列
+            cofidence_series[ms.join(i)] = support_series[ms.join(sorted(i))] / support_series[ms.join(i[:len(i) - 1])]
+
+        for i in cofidence_series[cofidence_series > confidence].index:  # 置信度筛选
+            result[i] = 0.0
+            result[i]['confidence'] = cofidence_series[i]
+            result[i]['support'] = support_series[ms.join(sorted(i.split(ms)))]
+
+    result = result.T.sort_values(['confidence', 'support'], ascending=False)  # 结果整理，输出
+    print('\n结果为：')
+    print(result)
+    return result
+
+#时间序列预测建模，非平稳序列差分转换成平稳序列（隔k个值的相关性趋于0），使用ARIMA模型预测,diff==成为平稳序列的差分次数
+def arima(data,diff=1):
+    _data=data.copy()
+    D_data=_data.diff().dropna()#差分序列，按行进行
+    print('差分序列白噪声检验结果：',acorr_ljungbox(_data,lags=1))
+    _data=_data.astype('float64')
+    pmax=int(len(D_data)/10)
+    qmax=int(len(D_data)/10)
+    bic_matrix=[]
+    for p in range(pmax+1):
+        tmp=[]
+        for q in range(qmax+1):
+            try:
+                tmp.append(sm.tsa.arima.ARIMA(_data,order=(p,diff,q)).fit().bic)
+            except Exception as e:
+                print(e)
+                tmp.append(None)
+        bic_matrix.append(tmp)
+    bic_matrix=pd.DataFrame(bic_matrix)
+    print(bic_matrix)
+    p,q=bic_matrix.stack().idxmin()
+    print('BIC的最小值p,q为：{0}，{1}'.format(p,q))
+    model=sm.tsa.arima.ARIMA(_data,order=(p,diff,q)).fit()
+    print('模型报告：\n',model.summary())
+    return model
+
+#自相关图，偏自相关图
+def diff_draw(data,diff):
+    _data=data.copy()
+    for i in range(diff):
+        _data=_data.diff().dropna()
+    plot_acf(_data)
+    plot_pacf(_data)
+    plt.show()
 
 def test():
-    excel_name = './source/chapter3/demo/data/catering_sale.xls'
-    index_col = '日期'
-    data, data_describe = excel_describe(excel_name, index_col)
-    # 箱型图
-    # boxplot(data)
+    # excel_name = './source/chapter3/demo/data/catering_sale.xls'
+    # index_col = '日期'
+    # data, data_describe = excel_describe(excel_name, index_col)
+    # # 箱型图
+    # # boxplot(data)
+    #
+    # excel_name2 = './source/chapter3/demo/data/catering_sale.xls'
+    # data2 = pd.read_excel(excel_name2, names=['date', 'sale'])
+    # # print(data2.columns)
+    # # 频率分布图
+    # # distribution_histogram(data2,'sale',500)
+    #
+    # excel_name3 = './source/chapter3/demo/data/dish_sale.xls'
+    # data3 = pd.read_excel(excel_name3, index_col=[0], names=['A', 'B', 'C'])
+    # print(data3)
+    # # 饼图
+    # # pie_chart(data=data3['A'],labels=data3.index)
+    #
+    # # 条形图
+    # # bar_chart(data=data3['A'],labels=data3.index,title='A部门月销量条形图')
+    #
+    # excel_name4 = './source/chapter3/demo/data/dish_sale_b.xls'
+    # data4 = pd.read_excel(excel_name4, index_col=0)
+    # # 折线对比图
+    # # line_compair_chart(data4.index,ydata=[data4[col] for col in data4.columns],labels=data4.columns)
+    # # 统计量
+    # print(statistic_addition(data4))
+    #
+    # excel_name5 = './source/chapter3/demo/data/user.csv'
+    # data5 = pd.read_csv(excel_name5)
+    # excel_name6 = './source/chapter3/demo/data/Steal user.csv'
+    # data6 = pd.read_csv(excel_name6)
+    # # 周期图
+    # # period_chart(data5['Date'],data5['Eletricity'],title='正常用户')
+    # # period_chart(data6['Date'],data6['Eletricity'],title='窃电用户')
+    #
+    # excel_name7 = './source/chapter3/demo/data/catering_dish_profit.xls'
+    # data7 = pd.read_excel(excel_name7, index_col='菜品名')
+    # data7.columns = ['id', 'profits']
+    # # 帕累托图
+    # # pareto_chart(data7['profits'], figsize=(10, 6))
+    #
+    # excel_name8 = './source/chapter3/demo/data/catering_sale_all.xls'
+    # data8 = pd.read_excel(excel_name8, index_col='日期')
+    # # 散点图
+    # # scatter_chart(data3['B'],data3['C'])
+    # x = [3, 5, 6, 7, 8]
+    # y = [4]
+    # z = np.array(x) * np.array(y)
+    # # scatter_chart(data8['翡翠蒸香茜饺'],data8['香煎韭菜饺'])
+    # # scatter_chart(x,z)
+    # # print(data8.corr(method='spearman'))  # 相关系数矩阵,pearson spearman等方法
+    # # print(data8.cov())  # 协方差矩阵
+    #
+    # # 插值
+    # # data9 = interp(data2)
+    # # data9.to_excel('./lagrange_interp.xlsx')
+    # # interp(data9,method=newton_interp)
+    # # data9.to_excel('./newton_intero.xlsx')
+    #
+    # # 标准化
+    # excel_name10 = './source/chapter3/demo/data/normalization_data.xls'
+    # data10 = pd.read_excel(excel_name10)
+    # # print(normalization(data10,method=mean_std_normal))
+    # # print(normalization(data10,method=max_min_normal))
+    # # print(normalization(data10,method=decimal_normal))
+    #
+    # excel_name11 = './source/chapter3/demo/data/discretization_data.xls'
+    # data11 = pd.read_excel(excel_name11, names=['data'])
+    # #一维数据离散化
+    # # print(cluster(data11['data'], 4,method=k_means_cluster_1d, is_draw=True))
+    # # print(cluster(data11['data'], 4,method=equal_width_cluster, is_draw=True))
+    # # print(cluster(data11['data'], 4,method=equal_fraguency_cluster, is_draw=True))
+    #
+    # excel_name12='./source/chapter3/demo/data/principal_component.xls'
+    # data12=pd.read_excel(excel_name12)
+    # #主成分分析
+    # # pca(data12).to_excel('principal_component_result.xls')
+    #
+    # excel_name13='source/chapter5/demo/data/bankloan.xls'
+    # data13=pd.read_excel(excel_name13)
+    # # x=pca(data13.iloc[:,:8])
+    # # y=data13.iloc[:,8]
+    # # data13=pd.concat([x,y],axis=1)
+    # #logistic回归 分类预测
+    # # logistic_model=logistic_regression(data13,'违约')
+    # # print(logistic_model.predict(data13.iloc[0:5,:8]))
+    #
+    # #决策树分类
+    # excel_name14='source/chapter5/demo/data/sales_data.xls'
+    # data14=pd.read_excel(excel_name14,index_col='序号')
+    # data14.columns=['weather','weekend','off','sales']
+    # # print(data14)
+    # # 1代表高，好，是，反之-1
+    # data14.replace(['是','高','好'],1,inplace=True)
+    # data14=data14[data14==1].replace(np.nan,0)
+    # # print(data14)
+    # # dtc(data14,label_col='sales')
+    #
+    # #测试聚类与决策树分类
+    # # nor_data13=normalization(data13.iloc[:,:len(data13.columns)-1])
+    # # nor_data13=abs(nor_data13)
+    # # gen_class=[]
+    # # print(nor_data13)
+    # # for col in nor_data13.columns:
+    # #     gen_class.append(cluster(nor_data13[col],k=4,is_draw=False))
+    # # gen_class.append(data13.iloc[:,-1])
+    # # new_pd=pd.concat(gen_class,axis=1)
+    # # dtc(new_pd,label_col='违约')
+    # # new_pd.to_excel('test_cluster_dtc.xlsx')
+    #
+    # #bp神经网络分类
+    # # bp_network(data14,label_col='sales',epochs=1000) 0.77
+    # # bp_network(data13,label_col='违约',epochs=1000) 0.84
+    #
+    # #k-means多特征分类
+    # excel_name15='source/chapter5/demo/data/consumption_data.xls'
+    # data15=pd.read_excel(excel_name15,index_col=0)
+    # # cluster(data15,k=4,save_density_fig=True)
+    #
+    # #apriori关联度
+    # excel_name16='source/chapter5/demo/data/menu_orders.xls'
+    # data16=pd.read_excel(excel_name16)
+    # # apriori(data16)
 
-    excel_name2 = './source/chapter3/demo/data/catering_sale.xls'
-    data2 = pd.read_excel(excel_name2, names=['date', 'sale'])
-    # print(data2.columns)
-    # 频率分布图
-    # distribution_histogram(data2,'sale',500)
+    #时间序列建模，首先确定是否是平稳序列，或差分后是否是平稳序列
+    excel_name17='source/chapter5/demo/data/arima_data.xls'
+    data17=pd.read_excel(excel_name17,index_col=0).dropna()
+    # diff_draw(data17,0) 画出自相关、偏相关图
+    # diff_draw(data17,1)
+    # period_chart(data17.index,data17.iloc[:,0])
+    # model=arima(data17,diff=1) #输入时间序列数据和差分次数
+    # print(model.forecast(5)) #预测后五天数据
 
-    excel_name3 = './source/chapter3/demo/data/dish_sale.xls'
-    data3 = pd.read_excel(excel_name3, index_col=[0], names=['A', 'B', 'C'])
-    print(data3)
-    # 饼图
-    # pie_chart(data=data3['A'],labels=data3.index)
-
-    # 条形图
-    # bar_chart(data=data3['A'],labels=data3.index,title='A部门月销量条形图')
-
-    excel_name4 = './source/chapter3/demo/data/dish_sale_b.xls'
-    data4 = pd.read_excel(excel_name4, index_col=0)
-    # 折线对比图
-    # line_compair_chart(data4.index,ydata=[data4[col] for col in data4.columns],labels=data4.columns)
-    # 统计量
-    print(statistic_addition(data4))
-
-    excel_name5 = './source/chapter3/demo/data/user.csv'
-    data5 = pd.read_csv(excel_name5)
-    excel_name6 = './source/chapter3/demo/data/Steal user.csv'
-    data6 = pd.read_csv(excel_name6)
-    # 周期图
-    # period_chart(data5['Date'],data5['Eletricity'],title='正常用户')
-    # period_chart(data6['Date'],data6['Eletricity'],title='窃电用户')
-
-    excel_name7 = './source/chapter3/demo/data/catering_dish_profit.xls'
-    data7 = pd.read_excel(excel_name7, index_col='菜品名')
-    data7.columns = ['id', 'profits']
-    # 帕累托图
-    # pareto_chart(data7['profits'], figsize=(10, 6))
-
-    excel_name8 = './source/chapter3/demo/data/catering_sale_all.xls'
-    data8 = pd.read_excel(excel_name8, index_col='日期')
-    # 散点图
-    # scatter_chart(data3['B'],data3['C'])
-    x = [3, 5, 6, 7, 8]
-    y = [4]
-    z = np.array(x) * np.array(y)
-    # scatter_chart(data8['翡翠蒸香茜饺'],data8['香煎韭菜饺'])
-    # scatter_chart(x,z)
-    # print(data8.corr(method='spearman'))  # 相关系数矩阵,pearson spearman等方法
-    # print(data8.cov())  # 协方差矩阵
-
-    # 插值
-    # data9 = interp(data2)
-    # data9.to_excel('./lagrange_interp.xlsx')
-    # interp(data9,method=newton_interp)
-    # data9.to_excel('./newton_intero.xlsx')
-
-    # 标准化
-    excel_name10 = './source/chapter3/demo/data/normalization_data.xls'
-    data10 = pd.read_excel(excel_name10)
-    # print(normalization(data10,method=mean_std_normal))
-    # print(normalization(data10,method=max_min_normal))
-    # print(normalization(data10,method=decimal_normal))
-
-    excel_name11 = './source/chapter3/demo/data/discretization_data.xls'
-    data11 = pd.read_excel(excel_name11, names=['data'])
-    #一维数据离散化
-    # print(cluster(data11['data'], 4,method=k_means_cluster_1d, is_draw=True))
-    # print(cluster(data11['data'], 4,method=equal_width_cluster, is_draw=True))
-    # print(cluster(data11['data'], 4,method=equal_fraguency_cluster, is_draw=True))
-
-    excel_name12='./source/chapter3/demo/data/principal_component.xls'
-    data12=pd.read_excel(excel_name12)
-    #主成分分析
-    # pca(data12).to_excel('principal_component_result.xls')
-
-    excel_name13='source/chapter5/demo/data/bankloan.xls'
-    data13=pd.read_excel(excel_name13)
-    # x=pca(data13.iloc[:,:8])
-    # y=data13.iloc[:,8]
-    # data13=pd.concat([x,y],axis=1)
-    #logistic回归 分类预测
-    # logistic_model=logistic_regression(data13,'违约')
-    # print(logistic_model.predict(data13.iloc[0:5,:8]))
-
-    #决策树分类
-    excel_name14='source/chapter5/demo/data/sales_data.xls'
-    data14=pd.read_excel(excel_name14,index_col='序号')
-    data14.columns=['weather','weekend','off','sales']
-    # print(data14)
-    # 1代表高，好，是，反之-1
-    data14.replace(['是','高','好'],1,inplace=True)
-    data14=data14[data14==1].replace(np.nan,0)
-    # print(data14)
-    # dtc(data14,label_col='sales')
-
-    #测试聚类与决策树分类
-    # nor_data13=normalization(data13.iloc[:,:len(data13.columns)-1])
-    # nor_data13=abs(nor_data13)
-    # gen_class=[]
-    # print(nor_data13)
-    # for col in nor_data13.columns:
-    #     gen_class.append(cluster(nor_data13[col],k=4,is_draw=False))
-    # gen_class.append(data13.iloc[:,-1])
-    # new_pd=pd.concat(gen_class,axis=1)
-    # dtc(new_pd,label_col='违约')
-    # new_pd.to_excel('test_cluster_dtc.xlsx')
-
-    #bp神经网络分类
-    # bp_network(data14,label_col='sales',epochs=1000) 0.77
-    # bp_network(data13,label_col='违约',epochs=1000) 0.84
-
-    #k-means多特征分类
-    excel_name15='source/chapter5/demo/data/consumption_data.xls'
-    data15=pd.read_excel(excel_name15,index_col=0)
-    # cluster(data15,k=4,save_density_fig=True)
 
 if __name__ == '__main__':
     test()
