@@ -1,5 +1,6 @@
 from typing import Union
 
+from scipy.stats import rankdata
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -7,8 +8,12 @@ from numpy import arange
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LinearRegression
 from sklearn.tree import DecisionTreeClassifier as DTC
 from sklearn.tree import export_graphviz
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
+from sklearn.naive_bayes import GaussianNB
 import os
 from keras.layers import Dense, LSTM, Dropout
 from keras.models import Sequential
@@ -18,6 +23,7 @@ from statsmodels.stats.diagnostic import acorr_ljungbox
 import statsmodels.api as sm
 from statsmodels.graphics.tsaplots import plot_acf
 from statsmodels.graphics.tsaplots import plot_pacf
+
 
 def excel_describe(excel_name, index_name: Union[str, int, None] = 0, sheet_name: Union[str, int, None] = 0):
     data = pd.read_excel(excel_name, index_col=index_name, sheet_name=sheet_name)
@@ -177,6 +183,19 @@ def decimal_normal(data):
     return data
 
 
+# 比例变换标准化 x/max(Xj)
+def scale_transform_normal(data):
+    data = data / data.max()
+    return data
+
+
+# 向量归一化 Xij/norm(Xj) norm--->范数 根号（Xij^2求和）
+def vector_normal(data):
+    for i in range(len(data.columns)):
+        data.iloc[:, i] = data.iloc[:, i] / np.linalg.norm(data.iloc[:, i])
+    return data
+
+
 # 标准化数据 默认零-均值标准化
 def normalization(data, method=mean_std_normal):
     _data = data.copy()
@@ -272,43 +291,45 @@ def k_means_cluster_1d(data, k):
     w = [0] + list(w[0]) + [data.max()]
     return pd.cut(data, w, labels=range(k))
 
-#多特征k-means聚类离散化
-def k_means_cluster_nd(data,k,to_excel_name,iteration=500):
-     kmodel=KMeans(n_clusters=k,max_iter=iteration,random_state=1234)
-     kmodel.fit(data)
 
-     #print result
-     r1=pd.Series(kmodel.labels_).value_counts()
-     r2=pd.DataFrame(kmodel.cluster_centers_)
-     r=pd.concat([r2,r1],axis=1)
-     r.columns=list(data.columns)+['类别数目']
-     print(r)
+# 多特征k-means聚类离散化
+def k_means_cluster_nd(data, k, to_excel_name, iteration=500):
+    kmodel = KMeans(n_clusters=k, max_iter=iteration, random_state=1234)
+    kmodel.fit(data)
 
-     r=pd.concat([data,pd.Series(kmodel.labels_,index=data.index)],axis=1)
-     r.columns=list(data.columns)+['聚类类别']
-     r.to_excel(to_excel_name)
+    # print result
+    r1 = pd.Series(kmodel.labels_).value_counts()
+    r2 = pd.DataFrame(kmodel.cluster_centers_)
+    r = pd.concat([r2, r1], axis=1)
+    r.columns = list(data.columns) + ['类别数目']
+    print(r)
 
-     return r
+    r = pd.concat([data, pd.Series(kmodel.labels_, index=data.index)], axis=1)
+    r.columns = list(data.columns) + ['聚类类别']
+    r.to_excel(to_excel_name)
+
+    return r
 
 
-
-#离散化数据，分类
-def cluster(data, k, method=k_means_cluster_nd,save_density_fig=False, is_draw=False,to_excel_name='k_means_result.xlsx'):
+# 离散化数据，分类
+def cluster(data, k, method=k_means_cluster_nd, save_density_fig=False, is_draw=False,
+            to_excel_name='k_means_result.xlsx'):
     _data = data.copy()
     try:
         d = method(_data, k, to_excel_name)
     except Exception:
-        d=method(_data,k)
+        d = method(_data, k)
 
     if save_density_fig:
         for i in range(k):
-            density_plot(_data[d['聚类类别']==i]).savefig('%s.png'%(i))
+            density_plot(_data[d['聚类类别'] == i]).savefig('%s.png' % (i))
 
     if is_draw:
         cluster_plot(_data, d, k)
     return d
 
-#画图离散化数据
+
+# 画图离散化数据
 def cluster_plot(data, d, k, figsize=(8, 4), title='离散数据图', xlabel='数据1', ylabel='数据2'):
     plt.rcParams['font.sans-serif'] = ['SimHei']
     plt.rcParams['axes.unicode_minus'] = False
@@ -319,57 +340,108 @@ def cluster_plot(data, d, k, figsize=(8, 4), title='离散数据图', xlabel='�
     plt.ylim(-0.5, k - 0.5)
     plt.show()
 
-#聚类密度图
+
+# 聚类密度图
 def density_plot(data):
     plt.rcParams['font.sans-serif'] = ['SimHei']
     plt.rcParams['axes.unicode_minus'] = False
 
-    p=data.plot(kind='kde',linewidth=2,subplots=True,sharex=False)
+    p = data.plot(kind='kde', linewidth=2, subplots=True, sharex=False)
     [p[i].set_ylabel('密度') for i in range(len(p))]
     plt.legend()
     return plt
 
-#主成分分析 将多维数据降维
-def pca(data,ratio=0.97):
-    instance=PCA()
+
+# 基于k-means聚类的离群点检测图 threshold阈值区分离群点
+def outliers_chart(data, k, threshold=2, figsize=(8, 4), title='离散数据图', xlabel='标签', ylabel='数据'):
+    _data = data.copy()
+    _data = normalization(_data)  # 标准化
+
+    model = KMeans(n_clusters=k, max_iter=500)
+    model.fit(_data)
+    r = pd.concat([_data, pd.Series(model.labels_, index=_data.index)], axis=1)
+    r.columns = list(_data.columns) + ['聚类类别']
+
+    norm = []
+    for i in range(k):
+        norm_tmp = r.iloc[:, :len(r.columns) - 1][r['聚类类别'] == i] - model.cluster_centers_[i]
+        norm_tmp = norm_tmp.apply(np.linalg.norm, axis=1)
+        norm.append(norm_tmp / norm_tmp.median())
+    norm = pd.concat(norm)
+    plt.rcParams['font.sans-serif'] = ['SimHei']
+    plt.rcParams['axes.unicode_minus'] = False
+    norm[norm <= threshold].plot(style='go')
+    discrete_points = norm[norm > threshold]
+    discrete_points.plot(style='ro')
+
+    for i in range(len(discrete_points)):
+        x = discrete_points.index[i]
+        n = discrete_points.iloc[i]
+        plt.annotate('(%s,%0.2f)' % (x, n), xy=(x, n), xytext=(x, n))
+
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.show()
+
+
+# 主成分分析 将多维数据降维 每条主成分向量由原来的列向量加权得来 主成分大小通过权重反应原来的列向量对主成分向量的影响 详情见司守奎
+def pca(data, ratio=0.97):
+    instance = PCA()
     instance.fit(data)
-    n=0
-    s=0
+    n = 0
+    s = 0
     for i in instance.explained_variance_ratio_:
-        s=i+s
-        n=n+1
-        if s >ratio:
+        s = i + s
+        n = n + 1
+        if s > ratio:
             break
-    # print(instance.explained_variance_ratio_)
-    # print(n)
-    n_pca=PCA(n)
+    print('coefficients=',instance.explained_variance_ratio_)
+    print('selected numbers=',n)
+    n_pca = PCA(n)
     n_pca.fit(data)
-    low_d=n_pca.transform(data)
+    low_d = n_pca.transform(data)
     return pd.DataFrame(low_d)
 
-#logistic 回归 分类
-def logistic_regression(data,label_col):
-    x=data.drop(columns=[label_col],axis=1).values
-    y=data[label_col].values
-    model=LogisticRegression()
-    model.fit(x,y)
-    print('accuracy: {}'.format(model.score(x,y)))
+
+# logistic 回归 二分类
+def logistic_regression(data, label_col):
+    x = data.drop(columns=[label_col], axis=1).values
+    y = data[label_col].values
+    model = LogisticRegression(solver='lbfgs')
+    model.fit(x, y)
+    print('accuracy: {}'.format(model.score(x, y)))
+    print('coefficient: ', model.coef_)  # 回归系数
+    print('intercept: ', model.intercept_)  # 截距
     return model
 
-#决策树分类
-def dtc(data,label_col,export_name='dtc_export.dot',pdf_name='dtc.pdf',to_pdf=True):
-    _data=data.copy()
-    x=_data.drop(columns=[label_col],axis=1).values.astype(int)
-    y=_data[label_col].values.astype(int)
-    _dtc=DTC(criterion='entropy')
-    _dtc.fit(x,y)
-    x=pd.DataFrame(x)
-    with open(export_name,'w') as f:
-        f=export_graphviz(_dtc,feature_names=_data.columns[:len(_data.columns)-1],out_file=f)
+
+# 线性回归 预测 y=B0+B1X1+B2X2.....+e e--->截距
+def linear_regression(data, label_col):
+    x = data.drop(columns=[label_col], axis=1).values
+    y = data[label_col].values
+    model = LinearRegression()
+    model.fit(x, y)
+    print('accuracy: {}'.format(model.score(x, y)))
+    print('coefficient: ', model.coef_)  # 回归系数
+    print('intercept: ', model.intercept_)  # 截距
+    return model
+
+
+# 决策树分类
+def dtc(data, label_col, export_name='dtc_export.dot', pdf_name='dtc.pdf', to_pdf=True):
+    _data = data.copy()
+    x = _data.drop(columns=[label_col], axis=1).values.astype(int)
+    y = _data[label_col].values.astype(int)
+    _dtc = DTC(criterion='entropy')
+    _dtc.fit(x, y)
+    x = pd.DataFrame(x)
+    with open(export_name, 'w') as f:
+        f = export_graphviz(_dtc, feature_names=_data.columns[:len(_data.columns) - 1], out_file=f)
     if to_pdf:
-        command='dot -Tpdf {0} -o {1}'.format(export_name,pdf_name)
+        command = 'dot -Tpdf {0} -o {1}'.format(export_name, pdf_name)
         os.system(command)
     return _dtc
+
 
 # one hot 编码
 def one_hot(data, capacity):
@@ -378,15 +450,16 @@ def one_hot(data, capacity):
         result[i, pos] = 1.
     return result
 
-#bp神经网络 默认二分类
-def bp_network(data,label_col,classes=2,epochs=500,batch_size=128,preprocess=True):
-    _data=data.copy()
-    x_train=_data.drop(columns=[label_col],axis=1).values
-    y_train=_data[label_col].values.astype(int)
-    y_train=one_hot(y_train,classes)
+
+# bp神经网络 默认二分类 建议有大量数据时使用 数据量太小过拟合严重
+def bp_network(data, label_col, classes=2, epochs=500, batch_size=128, preprocess=True):
+    _data = data.copy()
+    x_train = _data.drop(columns=[label_col], axis=1).values
+    y_train = _data[label_col].values.astype(int)
+    y_train = one_hot(y_train, classes)
     print(y_train)
     if preprocess:
-        normalization(x_train)#归一化
+        normalization(x_train)  # 归一化
 
     model = Sequential()
     model.add(Dense(64, input_shape=(x_train.shape[1],), activation='relu'))
@@ -402,15 +475,15 @@ def bp_network(data,label_col,classes=2,epochs=500,batch_size=128,preprocess=Tru
     history = model.fit(x_train, y_train, epochs=epochs, batch_size=batch_size)
     return model
 
-#apriori 寻找元素之间关联性(有点像有向图) support支持度=P(AB) confidence置信度=P(B|A)=P(AB)/P(A)
-def apriori(data,support=0.2,confidence=0.5,ms='----'):
-    _data=data.copy()
-    ct=lambda x:pd.Series(1,index=x[pd.notnull(x)])
-    b=list(map(ct,_data.values))
-    new_data=pd.DataFrame(b).fillna(0)
-    del b
-    return find_rule(new_data,support,confidence,ms)
 
+# apriori 寻找元素之间关联性(有点像有向图) support支持度=P(AB) confidence置信度=P(B|A)=P(AB)/P(A)
+def apriori(data, support=0.2, confidence=0.5, ms='----'):
+    _data = data.copy()
+    ct = lambda x: pd.Series(1, index=x[pd.notnull(x)])
+    b = list(map(ct, _data.values))
+    new_data = pd.DataFrame(b).fillna(0)
+    del b
+    return find_rule(new_data, support, confidence, ms)
 
 
 def connect_string(x, ms):
@@ -469,177 +542,132 @@ def find_rule(d, support, confidence, ms='--'):
     print(result)
     return result
 
-#时间序列预测建模，非平稳序列差分转换成平稳序列（隔k个值的相关性趋于0），使用ARIMA模型预测,diff==成为平稳序列的差分次数
-def arima(data,diff=1):
-    _data=data.copy()
-    D_data=_data.diff().dropna()#差分序列，按行进行
-    print('差分序列白噪声检验结果：',acorr_ljungbox(_data,lags=1))
-    _data=_data.astype('float64')
-    pmax=int(len(D_data)/10)
-    qmax=int(len(D_data)/10)
-    bic_matrix=[]
-    for p in range(pmax+1):
-        tmp=[]
-        for q in range(qmax+1):
+
+# 时间序列预测建模，非平稳序列差分转换成平稳序列（隔k个值的相关性趋于0），使用ARIMA模型预测,diff==成为平稳序列的差分次数
+def arima(data, diff=1):
+    _data = data.copy()
+    D_data = _data.diff().dropna()  # 差分序列，按行进行
+    print('差分序列白噪声检验结果：', acorr_ljungbox(_data, lags=1))
+    _data = _data.astype('float64')
+    pmax = int(len(D_data) / 10)
+    qmax = int(len(D_data) / 10)
+    bic_matrix = []
+    for p in range(pmax + 1):
+        tmp = []
+        for q in range(qmax + 1):
             try:
-                tmp.append(sm.tsa.arima.ARIMA(_data,order=(p,diff,q)).fit().bic)
+                tmp.append(sm.tsa.arima.ARIMA(_data, order=(p, diff, q)).fit().bic)
             except Exception as e:
                 print(e)
                 tmp.append(None)
         bic_matrix.append(tmp)
-    bic_matrix=pd.DataFrame(bic_matrix)
+    bic_matrix = pd.DataFrame(bic_matrix)
     print(bic_matrix)
-    p,q=bic_matrix.stack().idxmin()
-    print('BIC的最小值p,q为：{0}，{1}'.format(p,q))
-    model=sm.tsa.arima.ARIMA(_data,order=(p,diff,q)).fit()
-    print('模型报告：\n',model.summary())
+    p, q = bic_matrix.stack().idxmin()
+    print('BIC的最小值p,q为：{0}，{1}'.format(p, q))
+    model = sm.tsa.arima.ARIMA(_data, order=(p, diff, q)).fit()
+    print('模型报告：\n', model.summary())
     return model
 
-#自相关图，偏自相关图
-def diff_draw(data,diff):
-    _data=data.copy()
+
+# 自相关图，偏自相关图
+def correlation_draw(data, diff):
+    _data = data.copy()
     for i in range(diff):
-        _data=_data.diff().dropna()
+        _data = _data.diff().dropna()
     plot_acf(_data)
     plot_pacf(_data)
     plt.show()
 
-def test():
-    # excel_name = './source/chapter3/demo/data/catering_sale.xls'
-    # index_col = '日期'
-    # data, data_describe = excel_describe(excel_name, index_col)
-    # # 箱型图
-    # # boxplot(data)
-    #
-    # excel_name2 = './source/chapter3/demo/data/catering_sale.xls'
-    # data2 = pd.read_excel(excel_name2, names=['date', 'sale'])
-    # # print(data2.columns)
-    # # 频率分布图
-    # # distribution_histogram(data2,'sale',500)
-    #
-    # excel_name3 = './source/chapter3/demo/data/dish_sale.xls'
-    # data3 = pd.read_excel(excel_name3, index_col=[0], names=['A', 'B', 'C'])
-    # print(data3)
-    # # 饼图
-    # # pie_chart(data=data3['A'],labels=data3.index)
-    #
-    # # 条形图
-    # # bar_chart(data=data3['A'],labels=data3.index,title='A部门月销量条形图')
-    #
-    # excel_name4 = './source/chapter3/demo/data/dish_sale_b.xls'
-    # data4 = pd.read_excel(excel_name4, index_col=0)
-    # # 折线对比图
-    # # line_compair_chart(data4.index,ydata=[data4[col] for col in data4.columns],labels=data4.columns)
-    # # 统计量
-    # print(statistic_addition(data4))
-    #
-    # excel_name5 = './source/chapter3/demo/data/user.csv'
-    # data5 = pd.read_csv(excel_name5)
-    # excel_name6 = './source/chapter3/demo/data/Steal user.csv'
-    # data6 = pd.read_csv(excel_name6)
-    # # 周期图
-    # # period_chart(data5['Date'],data5['Eletricity'],title='正常用户')
-    # # period_chart(data6['Date'],data6['Eletricity'],title='窃电用户')
-    #
-    # excel_name7 = './source/chapter3/demo/data/catering_dish_profit.xls'
-    # data7 = pd.read_excel(excel_name7, index_col='菜品名')
-    # data7.columns = ['id', 'profits']
-    # # 帕累托图
-    # # pareto_chart(data7['profits'], figsize=(10, 6))
-    #
-    # excel_name8 = './source/chapter3/demo/data/catering_sale_all.xls'
-    # data8 = pd.read_excel(excel_name8, index_col='日期')
-    # # 散点图
-    # # scatter_chart(data3['B'],data3['C'])
-    # x = [3, 5, 6, 7, 8]
-    # y = [4]
-    # z = np.array(x) * np.array(y)
-    # # scatter_chart(data8['翡翠蒸香茜饺'],data8['香煎韭菜饺'])
-    # # scatter_chart(x,z)
-    # # print(data8.corr(method='spearman'))  # 相关系数矩阵,pearson spearman等方法
-    # # print(data8.cov())  # 协方差矩阵
-    #
-    # # 插值
-    # # data9 = interp(data2)
-    # # data9.to_excel('./lagrange_interp.xlsx')
-    # # interp(data9,method=newton_interp)
-    # # data9.to_excel('./newton_intero.xlsx')
-    #
-    # # 标准化
-    # excel_name10 = './source/chapter3/demo/data/normalization_data.xls'
-    # data10 = pd.read_excel(excel_name10)
-    # # print(normalization(data10,method=mean_std_normal))
-    # # print(normalization(data10,method=max_min_normal))
-    # # print(normalization(data10,method=decimal_normal))
-    #
-    # excel_name11 = './source/chapter3/demo/data/discretization_data.xls'
-    # data11 = pd.read_excel(excel_name11, names=['data'])
-    # #一维数据离散化
-    # # print(cluster(data11['data'], 4,method=k_means_cluster_1d, is_draw=True))
-    # # print(cluster(data11['data'], 4,method=equal_width_cluster, is_draw=True))
-    # # print(cluster(data11['data'], 4,method=equal_fraguency_cluster, is_draw=True))
-    #
-    # excel_name12='./source/chapter3/demo/data/principal_component.xls'
-    # data12=pd.read_excel(excel_name12)
-    # #主成分分析
-    # # pca(data12).to_excel('principal_component_result.xls')
-    #
-    # excel_name13='source/chapter5/demo/data/bankloan.xls'
-    # data13=pd.read_excel(excel_name13)
-    # # x=pca(data13.iloc[:,:8])
-    # # y=data13.iloc[:,8]
-    # # data13=pd.concat([x,y],axis=1)
-    # #logistic回归 分类预测
-    # # logistic_model=logistic_regression(data13,'违约')
-    # # print(logistic_model.predict(data13.iloc[0:5,:8]))
-    #
-    # #决策树分类
-    # excel_name14='source/chapter5/demo/data/sales_data.xls'
-    # data14=pd.read_excel(excel_name14,index_col='序号')
-    # data14.columns=['weather','weekend','off','sales']
-    # # print(data14)
-    # # 1代表高，好，是，反之-1
-    # data14.replace(['是','高','好'],1,inplace=True)
-    # data14=data14[data14==1].replace(np.nan,0)
-    # # print(data14)
-    # # dtc(data14,label_col='sales')
-    #
-    # #测试聚类与决策树分类
-    # # nor_data13=normalization(data13.iloc[:,:len(data13.columns)-1])
-    # # nor_data13=abs(nor_data13)
-    # # gen_class=[]
-    # # print(nor_data13)
-    # # for col in nor_data13.columns:
-    # #     gen_class.append(cluster(nor_data13[col],k=4,is_draw=False))
-    # # gen_class.append(data13.iloc[:,-1])
-    # # new_pd=pd.concat(gen_class,axis=1)
-    # # dtc(new_pd,label_col='违约')
-    # # new_pd.to_excel('test_cluster_dtc.xlsx')
-    #
-    # #bp神经网络分类
-    # # bp_network(data14,label_col='sales',epochs=1000) 0.77
-    # # bp_network(data13,label_col='违约',epochs=1000) 0.84
-    #
-    # #k-means多特征分类
-    # excel_name15='source/chapter5/demo/data/consumption_data.xls'
-    # data15=pd.read_excel(excel_name15,index_col=0)
-    # # cluster(data15,k=4,save_density_fig=True)
-    #
-    # #apriori关联度
-    # excel_name16='source/chapter5/demo/data/menu_orders.xls'
-    # data16=pd.read_excel(excel_name16)
-    # # apriori(data16)
 
-    #时间序列建模，首先确定是否是平稳序列，或差分后是否是平稳序列
-    excel_name17='source/chapter5/demo/data/arima_data.xls'
-    data17=pd.read_excel(excel_name17,index_col=0).dropna()
-    # diff_draw(data17,0) 画出自相关、偏相关图
-    # diff_draw(data17,1)
-    # period_chart(data17.index,data17.iloc[:,0])
-    # model=arima(data17,diff=1) #输入时间序列数据和差分次数
-    # print(model.forecast(5)) #预测后五天数据
+'''
+综合评价方法 TOPSIS求综合评价值 熵值法求特征权重 秩和比求权重
+'''
 
 
-if __name__ == '__main__':
-    test()
+# TOPSIS C+=[MAX(j) for j in columns] C-=[MIN(j) for j in columns]
+#  [S+(i)=[((b(ij)-C+(j))^2 for j in columns)^(1/2)] for i in rows] so the same as S- but with C-
+#  [f(i)=S-(i)/(S+(i) + S-(i) ) for i in rows] f即评价值
+def topsis(data):
+    _data = data.copy().values
+    cplus = _data.max(axis=0)  # C+正理想解
+    cminus = _data.min(axis=0)  # C-负理想解
+    print("正理想解=", cplus, "负理想解=", cminus)
+    d1 = np.linalg.norm(_data - cplus, axis=1)  # S+
+    d2 = np.linalg.norm(_data - cminus, axis=1)  # S-
+    print('S+ =', d1, 'S- =', d2)
+    f = d2 / (d1 + d2)
+    return pd.Series(f)
 
+
+# 灰色关联度 求评价值和系数 rho分辨系数
+def grey_relational_degree(data, rho=0.5):
+    _data = data.copy().values
+    t = _data.max(axis=0) - _data
+    mmin = t.min()  # 与每一列最大值的插值的每一列的最小值的最小值
+    mmax = t.max()
+    xs = (mmin + rho * mmax) / (t + rho * mmax)
+    f = xs.mean(axis=1)  # 每一行均值
+    return pd.DataFrame(xs), pd.Series(f)
+
+
+# 熵值法 求权重 综合评价值
+def entropy(data):
+    _data = data.copy().values
+    n, m = _data.shape
+    cs = _data.sum(axis=0)
+    P = _data / cs
+    e = -(P * np.log(P)).sum(axis=0) / np.log(n)
+    g = 1 - e
+    w = g / g.sum()
+    f = (P * w).sum(axis=1)
+    return pd.Series(w), pd.Series(f)
+
+
+# 秩和比 求综合评价值
+def rank_sum_ratio(data):
+    _data = data.copy().values
+    n, m = _data.shape
+    R = [rankdata(_data[:, i]) for i in np.arange(m)]
+    R = np.array(R).T
+    RSR = R.mean(axis=1) / n
+    return pd.Series(RSR)
+
+
+'''
+判别分析 KNeighborsClassifier Fisher 贝叶斯-----> 多分类
+'''
+
+
+# KNeighborsClassifier
+def knn(x, y, classes):
+    v = np.cov(x.T)
+    params={}
+    params.update(V=v)
+    model = KNeighborsClassifier(classes, metric='mahalanobis', metric_params=params)
+    model.fit(x, y)
+    print('accuracy',model.score(x, y))
+    return model
+
+# Fisher 判别分类
+def fisher(x,y,classes):
+    v = np.cov(x.T) #计算协方差矩阵
+    model = LDA()
+    model.fit(x, y)
+    print('accuracy',model.score(x, y))
+    return model
+
+#贝叶斯判别分类
+def beyes(x,y,classes):
+    v = np.cov(x.T) #计算协方差矩阵
+    model = GaussianNB()
+    model.fit(x, y)
+    print('accuracy',model.score(x, y))
+    return model
+
+# 判别法分析 分类
+def discriminant_classifier(data, classes, label_col, method=knn):
+    _data = data.copy()
+    x_train = _data.drop(columns=[label_col], axis=1).values.astype(float)
+    y_train = _data[label_col].values.astype(int)
+    return method(x_train, y_train, classes)
