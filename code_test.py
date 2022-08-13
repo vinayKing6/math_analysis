@@ -80,10 +80,10 @@ def test():
     # # print(cluster(data11['data'], 4,method=equal_width_cluster, is_draw=True))
     # # print(cluster(data11['data'], 4,method=equal_fraguency_cluster, is_draw=True))
     #
-    excel_name12='./source/chapter3/demo/data/principal_component.xls'
-    data12=pd.read_excel(excel_name12)
+    # excel_name12='./source/chapter3/demo/data/principal_component.xls'
+    # data12=pd.read_excel(excel_name12)
     # 主成分分析
-    print(pca(data12))
+    # print(pca(data12))
     #
     # excel_name13='source/chapter5/demo/data/linear_reg.xlsx'
     # excel_name13='source/程序及数据/程序及数据/12第12章  回归分析/Pdata12_6.txt'
@@ -138,7 +138,8 @@ def test():
     # #k-means多特征分类
     # excel_name15='source/chapter5/demo/data/consumption_data.xls'
     # data15=pd.read_excel(excel_name15,index_col=0)
-    # # cluster(data15,k=4,save_density_fig=True)
+    # find_k(data15,10) #寻找最优k
+    # cluster(data15,k=3,save_density_fig=True)
     #
     #apriori关联度
     # excel_name16='source/chapter5/demo/data/menu_orders.xls'
@@ -178,13 +179,18 @@ def test():
     # print(rank_sum_ratio(data18))
 
     #判别法分析
-    excel_name19='source/程序及数据/程序及数据/11第11章  多元分析/Pdata11_2.xlsx'
-    data19=pd.read_excel(excel_name19,index_col=0)
-    data19.columns=[i for i in range(len(data19.columns))]
+    # excel_name19='source/程序及数据/程序及数据/11第11章  多元分析/Pdata11_2.xlsx'
+    excel_name19='source/chapter5/demo/data/bankloan.xls'
+    data19=pd.read_excel(excel_name19)
+    data19.iloc[:,:-1]=normalization(data19.iloc[:,:-1],method=scale_transform_normal)
+    # data19.columns=[i for i in range(len(data19.columns))]
 
     # print(discriminant_classifier(data19.iloc[:20,:],3,5).predict(data19.iloc[-2:,:5].values))
-    # print(discriminant_classifier(data19.iloc[:20,:],3,5,method=fisher).predict(data19.iloc[-2:,:5].values))
-    print(discriminant_classifier(data19.iloc[:20,:],3,5,method=beyes).predict(data19.iloc[-2:,:5].values))
+    # print(discriminant_classifier(data19.iloc[:-5,:],2,'违约',method=fisher).predict(data19.iloc[-5:,:-1].values))
+    # print(discriminant_classifier(data19.iloc[:-5,:],2,'违约',method=beyes).predict(data19.iloc[-5:,:-1].values))
+
+    #支持向量机分类
+    print(svc(data19.iloc[:-5,:],label_col='违约',kernal=('linear','rbf'),C=[1,10,15],rate=0.01).predict(data19.iloc[-5:,:-1].values))
 
 
 
