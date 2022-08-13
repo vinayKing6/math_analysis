@@ -14,6 +14,8 @@ from sklearn.tree import export_graphviz
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
 from sklearn.naive_bayes import GaussianNB
+from sklearn.svm import SVC
+from sklearn.model_selection import GridSearchCV
 import os
 from keras.layers import Dense, LSTM, Dropout
 from keras.models import Sequential
@@ -291,6 +293,29 @@ def k_means_cluster_1d(data, k):
     w = [0] + list(w[0]) + [data.max()]
     return pd.cut(data, w, labels=range(k))
 
+#用于寻找k-means聚类中最优k,即折线折点最大处
+def find_k(data,K=None):
+    TSSE=[]
+    if K is None:
+        K=len(data)
+    for k in range(1,K+1):
+        print(k)
+        SSE=[]
+        model=KMeans(n_clusters=k)
+        model.fit(data)
+        labels=model.labels_
+        centers=model.cluster_centers_
+        for label in set(labels):
+            SSE.append(np.sum((data.values[labels==label,:]-centers[label,:])**2))
+        TSSE.append(np.sum(SSE))
+
+    plt.rcParams['font.sans-serif'] = ['SimHei']
+    plt.rcParams['axes.unicode_minus'] = False
+    plt.style.use('ggplot')
+    plt.plot(range(1,K+1),TSSE,'b*-')
+    plt.xlabel('簇的个数')
+    plt.ylabel('簇内离差平方之和')
+    plt.show()
 
 # 多特征k-means聚类离散化
 def k_means_cluster_nd(data, k, to_excel_name, iteration=500):
@@ -671,3 +696,42 @@ def discriminant_classifier(data, classes, label_col, method=knn):
     x_train = _data.drop(columns=[label_col], axis=1).values.astype(float)
     y_train = _data[label_col].values.astype(int)
     return method(x_train, y_train, classes)
+
+#支持向量机分类 svc kernal-->核函数 C--->惩罚系数 gamma 核函数参数r
+def svc(data,label_col,kernal,C,rate=0.1,cv_num=5):
+    _data = data.copy()
+    x_train = _data.drop(columns=[label_col], axis=1).values
+    y_train = _data[label_col].values.astype(int)
+    #k-折验算
+    id=0
+    max=0
+    maxid=0
+    result=[]
+    for k in kernal:
+        for c in C:
+            gama = rate
+            while (gama <= 1):
+                clf = SVC(kernel=k, C=c, gamma=gama)
+                # 开始进行模型的拟合，训练
+                clf.fit(x_train, y_train)
+                # 拟合分数
+                score = clf.score(x_train, y_train)
+                result.append([k, c, gama, score])
+                # print(id, result[id])
+                if max < score:
+                    max = score
+                    maxid = id
+
+                gama = gama + rate
+                id = id + 1
+
+    print("the best model:")
+    print(result[maxid])
+
+    # 使用得到的超参数进行模型的训练
+    clf = SVC(kernel=result[maxid][0], C=result[maxid][1], gamma=result[maxid][2])
+
+    clf.fit(x_train,y_train)
+
+    return clf
+
