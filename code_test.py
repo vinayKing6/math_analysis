@@ -3,11 +3,11 @@ import pandas as pd
 from pyanalysis import *
 
 def test():
-    # excel_name = './source/chapter3/demo/data/catering_sale.xls'
-    # index_col = '日期'
-    # data, data_describe = excel_describe(excel_name, index_col)
-    # # 箱型图
-    # # boxplot(data)
+    excel_name = './source/chapter3/demo/data/catering_sale.xls'
+    index_col = '日期'
+    data, data_describe = excel_describe(excel_name, index_col)
+    # 箱型图
+    boxplot(data)
     #
     # excel_name2 = './source/chapter3/demo/data/catering_sale.xls'
     # data2 = pd.read_excel(excel_name2, names=['date', 'sale'])
@@ -191,6 +191,12 @@ def test():
 
     #支持向量机分类
     print(svc(data19.iloc[:-5,:],label_col='违约',kernal=('linear','rbf'),C=[1,10,15],rate=0.01).predict(data19.iloc[-5:,:-1].values))
+
+    #灰色预测系统 data必须是时间序列
+    # for c in data19.columns[:-1]:
+    #     f=GM11(data19.loc[range(1994,2014),c])[0] #得到每一列的预测函数
+    #     data19.loc[2014,c]=f(len(data19)-1) #带入自变量 这里自变量从1开始 所以2014为倒数第二个自变量
+    #     data19.loc[2015,c]=f(len(data19))
 
 
 

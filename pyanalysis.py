@@ -9,13 +9,15 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
 from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import Lasso
 from sklearn.tree import DecisionTreeClassifier as DTC
 from sklearn.tree import export_graphviz
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
 from sklearn.naive_bayes import GaussianNB
 from sklearn.svm import SVC
-from sklearn.model_selection import GridSearchCV
+from sklearn.svm import SVR
+from sklearn.svm import LinearSVR
 import os
 from keras.layers import Dense, LSTM, Dropout
 from keras.models import Sequential
@@ -25,6 +27,7 @@ from statsmodels.stats.diagnostic import acorr_ljungbox
 import statsmodels.api as sm
 from statsmodels.graphics.tsaplots import plot_acf
 from statsmodels.graphics.tsaplots import plot_pacf
+import seaborn as sns
 
 
 def excel_describe(excel_name, index_name: Union[str, int, None] = 0, sheet_name: Union[str, int, None] = 0):
@@ -163,6 +166,15 @@ def scatter_chart(xdata, ydata, figsize=(8, 4), title='散点图', xlabel='数�
     plt.scatter(xdata, ydata)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
+    plt.title(title)
+    plt.show()
+
+#热力图，查看多特征相关性
+def heatmap(corr_data,figsize=(10,10), title='热力图'):
+    plt.rcParams['font.sans-serif'] = ['SimHei']
+    plt.rcParams['axes.unicode_minus'] = False
+    plt.subplots(figsize=figsize)
+    sns.heatmap(corr_data,annot=True,vmax=1,square=True,cmap='Blues')
     plt.title(title)
     plt.show()
 
@@ -440,7 +452,7 @@ def logistic_regression(data, label_col):
     return model
 
 
-# 线性回归 预测 y=B0+B1X1+B2X2.....+e e--->截距
+# 线性回归 预测真实值 y=B0+B1X1+B2X2.....+e e--->截距
 def linear_regression(data, label_col):
     x = data.drop(columns=[label_col], axis=1).values
     y = data[label_col].values
@@ -451,6 +463,16 @@ def linear_regression(data, label_col):
     print('intercept: ', model.intercept_)  # 截距
     return model
 
+#Lasso回归 预测真实值 ---> 在较多强相关性特征时，可以使用回归系数降维特征 回归系数为0时表示对预测值无参考意义 C---->惩罚系数
+def lasso_regression(data,label_col,C=1000):
+    x = data.drop(columns=[label_col], axis=1).values
+    y = data[label_col].values
+    model = Lasso(C)
+    model.fit(x, y)
+    print('accuracy: {}'.format(model.score(x, y)))
+    print('coefficient: ', model.coef_)  # 回归系数
+    print('intercept: ', model.intercept_)  # 截距
+    return model
 
 # 决策树分类
 def dtc(data, label_col, export_name='dtc_export.dot', pdf_name='dtc.pdf', to_pdf=True):
@@ -625,7 +647,7 @@ def topsis(data):
     return pd.Series(f)
 
 
-# 灰色关联度 求评价值和系数 rho分辨系数
+# 灰色关联度 求评价值f和系数xs rho分辨系数
 def grey_relational_degree(data, rho=0.5):
     _data = data.copy().values
     t = _data.max(axis=0) - _data
@@ -636,7 +658,7 @@ def grey_relational_degree(data, rho=0.5):
     return pd.DataFrame(xs), pd.Series(f)
 
 
-# 熵值法 求权重 综合评价值
+# 熵值法 求权重w 综合评价值f
 def entropy(data):
     _data = data.copy().values
     n, m = _data.shape
@@ -697,8 +719,23 @@ def discriminant_classifier(data, classes, label_col, method=knn):
     y_train = _data[label_col].values.astype(int)
     return method(x_train, y_train, classes)
 
+#一维数据(若多维，请循环列数)灰色预测系统 ---->多用于时间序列预测 关键思想---->累加法、微分方程 详情见司守奎
+def GM11(data):
+    x0=data.values
+    x1 = x0.cumsum() #1-AGO序列
+    z1 = (x1[:len(x1)-1] + x1[1:])/2.0 #紧邻均值（MEAN）生成序列
+    z1 = z1.reshape((len(z1),1))
+    B = np.append(-z1, np.ones_like(z1), axis = 1)
+    Yn = x0[1:].reshape((len(x0)-1, 1))
+    [[a],[b]] = np.dot(np.dot(np.linalg.inv(np.dot(B.T, B)), B.T), Yn) #计算参数
+    f = lambda k: (x0[0]-b/a)*np.exp(-a*(k-1))-(x0[0]-b/a)*np.exp(-a*(k-2)) #还原值
+    delta = np.abs(x0 - np.array([f(i) for i in range(1,len(x0)+1)]))
+    C = delta.std()/x0.std()
+    P = 1.0*(np.abs(delta - delta.mean()) < 0.6745*x0.std()).sum()/len(x0)
+    return f, a, b, x0[0], C, P #返回灰色预测函数、a、b、首项、方差比、小残差概率
+
 #支持向量机分类 svc kernal-->核函数 C--->惩罚系数 gamma 核函数参数r
-def svc(data,label_col,kernal,C,rate=0.1,cv_num=5):
+def svc(data,label_col,kernal=('linear','rbf'),C=[1],rate=0.1,cv_num=5):
     _data = data.copy()
     x_train = _data.drop(columns=[label_col], axis=1).values
     y_train = _data[label_col].values.astype(int)
@@ -735,3 +772,23 @@ def svc(data,label_col,kernal,C,rate=0.1,cv_num=5):
 
     return clf
 
+#支持向量机回归 预测真实值
+def svr(data,label_col,kernal='linear',C=1,gama='auto'):
+    _data = data.copy()
+    x_train = _data.drop(columns=[label_col], axis=1).values
+    y_train = _data[label_col].values.astype(int)
+    # 使用得到的超参数进行模型的训练
+    clf = SVR(kernel=kernal,C=C, gamma=gama)
+    clf.fit(x_train,y_train)
+
+    return clf
+
+def linear_svr(data,label_col):
+    _data = data.copy()
+    x_train = _data.drop(columns=[label_col], axis=1).values
+    y_train = _data[label_col].values
+    # 使用得到的超参数进行模型的训练
+    clf = LinearSVR()
+    clf.fit(x_train,y_train)
+
+    return clf
