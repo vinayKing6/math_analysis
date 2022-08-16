@@ -9,11 +9,11 @@ def test():
     # 箱型图
     boxplot(data)
     #
-    # excel_name2 = './source/chapter3/demo/data/catering_sale.xls'
-    # data2 = pd.read_excel(excel_name2, names=['date', 'sale'])
+    excel_name2 = './source/chapter3/demo/data/catering_sale.xls'
+    data2 = pd.read_excel(excel_name2, names=['date', 'sale'])
     # # print(data2.columns)
-    # # 频率分布图
-    # # distribution_histogram(data2,'sale',500)
+    # 频率分布图
+    # distribution_histogram(data2,'sale',cut=500)
     #
     # excel_name3 = './source/chapter3/demo/data/dish_sale.xls'
     # data3 = pd.read_excel(excel_name3, index_col=[0], names=['A', 'B', 'C'])
@@ -138,8 +138,9 @@ def test():
     # #k-means多特征分类
     # excel_name15='source/chapter5/demo/data/consumption_data.xls'
     # data15=pd.read_excel(excel_name15,index_col=0)
+    # data15=normalization(data15)
     # find_k(data15,10) #寻找最优k
-    # cluster(data15,k=3,save_density_fig=True)
+    # cluster(data15,k=3,save_density_fig=True,save_radar_fig=True)
     #
     #apriori关联度
     # excel_name16='source/chapter5/demo/data/menu_orders.xls'
@@ -197,6 +198,7 @@ def test():
     #     f=GM11(data19.loc[range(1994,2014),c])[0] #得到每一列的预测函数
     #     data19.loc[2014,c]=f(len(data19)-1) #带入自变量 这里自变量从1开始 所以2014为倒数第二个自变量
     #     data19.loc[2015,c]=f(len(data19))
+
 
 
 

@@ -38,23 +38,24 @@ def excel_describe(excel_name, index_name: Union[str, int, None] = 0, sheet_name
 
 
 # 异常值处理箱型图
-def boxplot(data):
+def boxplot(data, figsize=(5, 10), title='箱型图'):
     _data = data.copy()
     # 正常显示一些图标
     plt.rcParams['font.sans-serif'] = ['SimHei']
     plt.rcParams['axes.unicode_minus'] = False
 
-    plt.figure()
-    p = _data.boxplot(return_type='dict')
+    plt.figure(figsize=figsize)
+    plt.title(title)
+    p = _data.boxplot(return_type='dict', patch_artist=True)
     x = p['fliers'][0].get_xdata()
     y = p['fliers'][0].get_ydata()
     y.sort()
 
-    for i in range(len(x)):
-        if i > 0:
-            plt.annotate(y[i], xy=(x[i], y[i]), xytext=(x[i] + 0.05 - 0.8 / (y[i] - y[i - 1]), y[i]))
-        else:
-            plt.annotate(y[i], xy=(x[i], y[i]), xytext=(x[i] + 0.08, y[i]))
+    # for i in range(len(x)):
+    #     if i > 0:
+    #         plt.annotate(y[i], xy=(x[i], y[i]), xytext=(x[i] + 0.05 - 0.8 / (y[i] - y[i - 1]), y[i]))
+    #     else:
+    #         plt.annotate(y[i], xy=(x[i], y[i]), xytext=(x[i] + 0.08, y[i]))
 
     plt.show()
 
@@ -68,13 +69,13 @@ def distribution_histogram(data, col, cut, figsize=(10, 6), xlabel='分层', tit
     n = round((max - min) / cut)
     bins = []
     for i in range(n + 1):
-        bins.append(i * 500)
+        bins.append(i * cut)
     labels = []
     for i in range(n):
-        labels.append('[{0},{1})'.format(i * 500, (i + 1) * 500))
+        labels.append('[{0},{1})'.format(i * cut, (i + 1) * cut))
     _data['distribution'] = pd.cut(_data[col], bins, labels=labels)
     plt.figure(figsize=figsize)  # 设置图框大小尺寸
-    plt.hist(_data['sale'], bins)
+    plt.hist(_data[col], bins)
     plt.xticks(range(0, bins[-1], cut))
     plt.xlabel(xlabel)
     plt.grid()
@@ -83,10 +84,22 @@ def distribution_histogram(data, col, cut, figsize=(10, 6), xlabel='分层', tit
     plt.show()
 
 
+# 直方图
+def histogram(data, col, bins='auto', figsize=(10, 6), xlabel='分层', ylabel='数据', title='直方图'):
+    _data = data.copy()
+    plt.figure(figsize=figsize)  # 设置图框大小尺寸
+    plt.hist(_data[col], bins)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.rcParams['font.sans-serif'] = ['SimHei']  # 用来正常显示中文标签
+    plt.title(title, fontsize=20)
+    plt.show()
+
+
 # 饼图
 def pie_chart(data, labels, figsize=(8, 6), title='饼图', xlabel='数据'):
     plt.figure(figsize=figsize)
-    plt.pie(data, labels=labels)
+    plt.pie(data, labels=labels, autopct='%1.1f%%')
     plt.rcParams['font.sans-serif'] = 'SimHei'
     plt.title(title)
     plt.xlabel(xlabel)
@@ -169,12 +182,13 @@ def scatter_chart(xdata, ydata, figsize=(8, 4), title='散点图', xlabel='数�
     plt.title(title)
     plt.show()
 
-#热力图，查看多特征相关性
-def heatmap(corr_data,figsize=(10,10), title='热力图'):
+
+# 热力图，查看多特征相关性
+def heatmap(corr_data, figsize=(10, 10), title='热力图'):
     plt.rcParams['font.sans-serif'] = ['SimHei']
     plt.rcParams['axes.unicode_minus'] = False
     plt.subplots(figsize=figsize)
-    sns.heatmap(corr_data,annot=True,vmax=1,square=True,cmap='Blues')
+    sns.heatmap(corr_data, annot=True, vmax=1, square=True, cmap='Blues')
     plt.title(title)
     plt.show()
 
@@ -216,7 +230,7 @@ def normalization(data, method=mean_std_normal):
     return method(data)
 
 
-# range=max-min(极差) var=std/mean(变异系数=标准差/均值) dis=75%-25%(四分位数间距)
+# range=max-min(极差) var=std/mean(变异系数=标准差/均值) dis=75%-25%(四分位数间距) null空值
 def statistic_addition(data):
     _data = data.copy()
     statistics = _data.describe()
@@ -224,6 +238,7 @@ def statistic_addition(data):
     statistics.loc['range'] = statistics.loc['max'] - statistics.loc['min']
     statistics.loc['var'] = statistics.loc['std'] / statistics.loc['mean']
     statistics.loc['dis'] = statistics.loc['75%'] - statistics.loc['25%']
+    statistics.loc['null'] = len(_data) - statistics.loc['count']
 
     return statistics
 
@@ -303,31 +318,33 @@ def k_means_cluster_1d(data, k):
     w = c.rolling(2).mean()
     w = w.dropna()
     w = [0] + list(w[0]) + [data.max()]
-    return pd.cut(data, w, labels=range(k))
+    return pd.cut(data, w, labels=range(k)), kmodel
 
-#用于寻找k-means聚类中最优k,即折线折点最大处
-def find_k(data,K=None):
-    TSSE=[]
+
+# 用于寻找k-means聚类中最优k,即折线折点最大处
+def find_k(data, K=None):
+    TSSE = []
     if K is None:
-        K=len(data)
-    for k in range(1,K+1):
+        K = len(data)
+    for k in range(1, K + 1):
         print(k)
-        SSE=[]
-        model=KMeans(n_clusters=k)
+        SSE = []
+        model = KMeans(n_clusters=k)
         model.fit(data)
-        labels=model.labels_
-        centers=model.cluster_centers_
+        labels = model.labels_
+        centers = model.cluster_centers_
         for label in set(labels):
-            SSE.append(np.sum((data.values[labels==label,:]-centers[label,:])**2))
+            SSE.append(np.sum((data.values[labels == label, :] - centers[label, :]) ** 2))
         TSSE.append(np.sum(SSE))
 
     plt.rcParams['font.sans-serif'] = ['SimHei']
     plt.rcParams['axes.unicode_minus'] = False
     plt.style.use('ggplot')
-    plt.plot(range(1,K+1),TSSE,'b*-')
+    plt.plot(range(1, K + 1), TSSE, 'b*-')
     plt.xlabel('簇的个数')
     plt.ylabel('簇内离差平方之和')
     plt.show()
+
 
 # 多特征k-means聚类离散化
 def k_means_cluster_nd(data, k, to_excel_name, iteration=500):
@@ -345,15 +362,16 @@ def k_means_cluster_nd(data, k, to_excel_name, iteration=500):
     r.columns = list(data.columns) + ['聚类类别']
     r.to_excel(to_excel_name)
 
-    return r
+    return r, kmodel
 
 
 # 离散化数据，分类
-def cluster(data, k, method=k_means_cluster_nd, save_density_fig=False, is_draw=False,
+def cluster(data, k, method=k_means_cluster_nd, save_density_fig=False, save_radar_fig=False, is_draw=False,
             to_excel_name='k_means_result.xlsx'):
     _data = data.copy()
+    model = ''
     try:
-        d = method(_data, k, to_excel_name)
+        d, model = method(_data, k, to_excel_name)
     except Exception:
         d = method(_data, k)
 
@@ -363,7 +381,43 @@ def cluster(data, k, method=k_means_cluster_nd, save_density_fig=False, is_draw=
 
     if is_draw:
         cluster_plot(_data, d, k)
-    return d
+
+    if save_radar_fig:
+        radar_chart(model.cluster_centers_, data.columns).savefig('radar.png')
+
+    return d, model
+
+
+# 分类数据雷达图 数据必须标准化 消除量纲
+def radar_chart(centers_data, labels):
+    labels=list(labels)
+    cluster_center = pd.DataFrame(centers_data, columns=labels)
+    legen = cluster_center.index
+    lstype = ['-', '--', (0, (3, 5, 1, 5, 1, 5)), ':', '-.']
+    kinds = list(cluster_center.iloc[:, 0])
+    # 由于雷达图要保证数据闭合，因此再添加L列，并转换为 np.ndarray
+    cluster_center = pd.concat([cluster_center, cluster_center[[cluster_center.columns[0]]]], axis=1)
+    centers = np.array(cluster_center.iloc[:, 0:])
+
+    # 分割圆周长，并让其闭合
+    n = len(labels)
+    angle = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    angle = np.concatenate((angle, [angle[0]]))
+
+    # 绘图
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, polar=True)  # 以极坐标的形式绘制图形
+    plt.rcParams['font.sans-serif'] = ['SimHei']  # 用来正常显示中文标签
+    plt.rcParams['axes.unicode_minus'] = False  # 用来正常显示负号
+    # 画线
+    for i in range(len(kinds)):
+        ax.plot(angle, centers[i], linestyle=lstype[i], linewidth=2, label=kinds[i])
+    # 添加属性标签
+    labels.append(labels[0])
+    ax.set_thetagrids(angle * 180 / np.pi, labels)
+    plt.title('群体特征分析雷达图')
+    plt.legend(legen)
+    return plt
 
 
 # 画图离散化数据
@@ -432,8 +486,8 @@ def pca(data, ratio=0.97):
         n = n + 1
         if s > ratio:
             break
-    print('coefficients=',instance.explained_variance_ratio_)
-    print('selected numbers=',n)
+    print('coefficients=', instance.explained_variance_ratio_)
+    print('selected numbers=', n)
     n_pca = PCA(n)
     n_pca.fit(data)
     low_d = n_pca.transform(data)
@@ -463,8 +517,9 @@ def linear_regression(data, label_col):
     print('intercept: ', model.intercept_)  # 截距
     return model
 
-#Lasso回归 预测真实值 ---> 在较多强相关性特征时，可以使用回归系数降维特征 回归系数为0时表示对预测值无参考意义 C---->惩罚系数
-def lasso_regression(data,label_col,C=1000):
+
+# Lasso回归 预测真实值 ---> 在较多强相关性特征时，可以使用回归系数降维特征 回归系数为0时表示对预测值无参考意义 C---->惩罚系数
+def lasso_regression(data, label_col, C=1000):
     x = data.drop(columns=[label_col], axis=1).values
     y = data[label_col].values
     model = Lasso(C)
@@ -473,6 +528,7 @@ def lasso_regression(data,label_col,C=1000):
     print('coefficient: ', model.coef_)  # 回归系数
     print('intercept: ', model.intercept_)  # 截距
     return model
+
 
 # 决策树分类
 def dtc(data, label_col, export_name='dtc_export.dot', pdf_name='dtc.pdf', to_pdf=True):
@@ -689,61 +745,66 @@ def rank_sum_ratio(data):
 # KNeighborsClassifier
 def knn(x, y, classes):
     v = np.cov(x.T)
-    params={}
+    params = {}
     params.update(V=v)
     model = KNeighborsClassifier(classes, metric='mahalanobis', metric_params=params)
     model.fit(x, y)
-    print('accuracy',model.score(x, y))
+    print('accuracy', model.score(x, y))
     return model
+
 
 # Fisher 判别分类
-def fisher(x,y,classes):
-    v = np.cov(x.T) #计算协方差矩阵
+def fisher(x, y, classes):
+    v = np.cov(x.T)  # 计算协方差矩阵
     model = LDA()
     model.fit(x, y)
-    print('accuracy',model.score(x, y))
+    print('accuracy', model.score(x, y))
     return model
 
-#贝叶斯判别分类
-def beyes(x,y,classes):
-    v = np.cov(x.T) #计算协方差矩阵
+
+# 贝叶斯判别分类
+def beyes(x, y, classes):
+    v = np.cov(x.T)  # 计算协方差矩阵
     model = GaussianNB()
     model.fit(x, y)
-    print('accuracy',model.score(x, y))
+    print('accuracy', model.score(x, y))
     return model
 
+
 # 判别法分析 分类
-def discriminant_classifier(data, classes, label_col, method=knn):
+def discriminant_classifier(data, label_col, classes=2, method=knn):
     _data = data.copy()
     x_train = _data.drop(columns=[label_col], axis=1).values.astype(float)
     y_train = _data[label_col].values.astype(int)
     return method(x_train, y_train, classes)
 
-#一维数据(若多维，请循环列数)灰色预测系统 ---->多用于时间序列预测 关键思想---->累加法、微分方程 详情见司守奎
-def GM11(data):
-    x0=data.values
-    x1 = x0.cumsum() #1-AGO序列
-    z1 = (x1[:len(x1)-1] + x1[1:])/2.0 #紧邻均值（MEAN）生成序列
-    z1 = z1.reshape((len(z1),1))
-    B = np.append(-z1, np.ones_like(z1), axis = 1)
-    Yn = x0[1:].reshape((len(x0)-1, 1))
-    [[a],[b]] = np.dot(np.dot(np.linalg.inv(np.dot(B.T, B)), B.T), Yn) #计算参数
-    f = lambda k: (x0[0]-b/a)*np.exp(-a*(k-1))-(x0[0]-b/a)*np.exp(-a*(k-2)) #还原值
-    delta = np.abs(x0 - np.array([f(i) for i in range(1,len(x0)+1)]))
-    C = delta.std()/x0.std()
-    P = 1.0*(np.abs(delta - delta.mean()) < 0.6745*x0.std()).sum()/len(x0)
-    return f, a, b, x0[0], C, P #返回灰色预测函数、a、b、首项、方差比、小残差概率
 
-#支持向量机分类 svc kernal-->核函数 C--->惩罚系数 gamma 核函数参数r
-def svc(data,label_col,kernal=('linear','rbf'),C=[1],rate=0.1,cv_num=5):
+# 一维数据(若多维，请循环列数)灰色预测系统 ---->多用于时间序列预测 关键思想---->累加法、微分方程 详情见司守奎
+def GM11(data):
+    x0 = data.values
+    x1 = x0.cumsum()  # 1-AGO序列
+    z1 = (x1[:len(x1) - 1] + x1[1:]) / 2.0  # 紧邻均值（MEAN）生成序列
+    z1 = z1.reshape((len(z1), 1))
+    B = np.append(-z1, np.ones_like(z1), axis=1)
+    Yn = x0[1:].reshape((len(x0) - 1, 1))
+    [[a], [b]] = np.dot(np.dot(np.linalg.inv(np.dot(B.T, B)), B.T), Yn)  # 计算参数
+    f = lambda k: (x0[0] - b / a) * np.exp(-a * (k - 1)) - (x0[0] - b / a) * np.exp(-a * (k - 2))  # 还原值
+    delta = np.abs(x0 - np.array([f(i) for i in range(1, len(x0) + 1)]))
+    C = delta.std() / x0.std()
+    P = 1.0 * (np.abs(delta - delta.mean()) < 0.6745 * x0.std()).sum() / len(x0)
+    return f, a, b, x0[0], C, P  # 返回灰色预测函数、a、b、首项、方差比、小残差概率
+
+
+# 支持向量机分类 svc kernal-->核函数 C--->惩罚系数 gamma 核函数参数r
+def svc(data, label_col, kernal=('linear', 'rbf'), C=[1], rate=0.1, cv_num=5):
     _data = data.copy()
     x_train = _data.drop(columns=[label_col], axis=1).values
     y_train = _data[label_col].values.astype(int)
-    #k-折验算
-    id=0
-    max=0
-    maxid=0
-    result=[]
+    # k-折验算
+    id = 0
+    max = 0
+    maxid = 0
+    result = []
     for k in kernal:
         for c in C:
             gama = rate
@@ -768,27 +829,29 @@ def svc(data,label_col,kernal=('linear','rbf'),C=[1],rate=0.1,cv_num=5):
     # 使用得到的超参数进行模型的训练
     clf = SVC(kernel=result[maxid][0], C=result[maxid][1], gamma=result[maxid][2])
 
-    clf.fit(x_train,y_train)
+    clf.fit(x_train, y_train)
 
     return clf
 
-#支持向量机回归 预测真实值
-def svr(data,label_col,kernal='linear',C=1,gama='auto'):
+
+# 支持向量机回归 预测真实值
+def svr(data, label_col, kernal='linear', C=1, gama='auto'):
     _data = data.copy()
     x_train = _data.drop(columns=[label_col], axis=1).values
     y_train = _data[label_col].values.astype(int)
     # 使用得到的超参数进行模型的训练
-    clf = SVR(kernel=kernal,C=C, gamma=gama)
-    clf.fit(x_train,y_train)
+    clf = SVR(kernel=kernal, C=C, gamma=gama)
+    clf.fit(x_train, y_train)
 
     return clf
 
-def linear_svr(data,label_col):
+
+def linear_svr(data, label_col):
     _data = data.copy()
     x_train = _data.drop(columns=[label_col], axis=1).values
     y_train = _data[label_col].values
     # 使用得到的超参数进行模型的训练
     clf = LinearSVR()
-    clf.fit(x_train,y_train)
+    clf.fit(x_train, y_train)
 
     return clf
